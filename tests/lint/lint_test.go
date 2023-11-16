@@ -5,7 +5,7 @@ import (
 
 	"google.golang.org/protobuf/proto"
 
-	"github.com/alta/protopatch/tests"
+	"github.com/sudhiaithal/protopatch/tests"
 )
 
 func TestURL(t *testing.T) {

@@ -3,7 +3,7 @@ package plugin
 import (
 	"testing"
 
-	"github.com/alta/protopatch/tests"
+	"github.com/sudhiaithal/protopatch/tests"
 )
 
 var (

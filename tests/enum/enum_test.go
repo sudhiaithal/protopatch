@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/alta/protopatch/tests"
+	"github.com/sudhiaithal/protopatch/tests"
 )
 
 func TestKind(t *testing.T) {

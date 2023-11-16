@@ -4,7 +4,7 @@ package tests.message;
 
 import "patch/go.proto";
 
-option go_package = "github.com/alta/protopatch/tests/message";
+option go_package = "github.com/sudhiaithal/protopatch/tests/message";
 
 message Francis {
 	option (go.message).name = 'Frank';

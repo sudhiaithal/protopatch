@@ -2,7 +2,7 @@ syntax = "proto3";
 
 package tests.message;
 
-option go_package = "github.com/alta/protopatch/tests/message";
+option go_package = "github.com/sudhiaithal/protopatch/tests/message";
 
 message Basic {
 	int32 id = 1;

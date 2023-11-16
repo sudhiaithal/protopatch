@@ -20,8 +20,8 @@ import (
 	"google.golang.org/protobuf/compiler/protogen"
 	"google.golang.org/protobuf/types/pluginpb"
 
-	"github.com/alta/protopatch/lint"
-	"github.com/alta/protopatch/patch/ident"
+	"github.com/sudhiaithal/protopatch/lint"
+	"github.com/sudhiaithal/protopatch/patch/ident"
 )
 
 // Patcher patches a set of generated Go Protobuf files with additional features:

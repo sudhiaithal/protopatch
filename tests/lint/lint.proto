@@ -5,7 +5,7 @@ package tests.lint;
 import "patch/go.proto";
 import "tests/lint/sub/sub.proto";
 
-option go_package = "github.com/alta/protopatch/tests/lint";
+option go_package = "github.com/sudhiaithal/protopatch/tests/lint";
 
 option (go.lint).all = true;
 option (go.lint).initialisms = 'RGB';

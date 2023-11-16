@@ -7,8 +7,8 @@
 package lint
 
 import (
-	_ "github.com/alta/protopatch/patch/gopb"
-	sub "github.com/alta/protopatch/tests/lint/sub"
+	_ "github.com/sudhiaithal/protopatch/patch/gopb"
+	sub "github.com/sudhiaithal/protopatch/tests/lint/sub"
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 	reflect "reflect"

@@ -4,7 +4,7 @@ package go;
 
 import "google/protobuf/descriptor.proto";
 
-option go_package = "github.com/alta/protopatch/patch/gopb";
+option go_package = "github.com/sudhiaithal/protopatch/patch/gopb";
 
 // Options represent Go-specific options for Protobuf messages, fields, oneofs, enums, or enum values.
 message Options {

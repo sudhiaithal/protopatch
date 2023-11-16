@@ -4,7 +4,7 @@ syntax = "proto3";
 package tests.enum;
 // clang-format on
 
-option go_package = "github.com/alta/protopatch/tests/enum";
+option go_package = "github.com/sudhiaithal/protopatch/tests/enum";
 
 enum Kind {
 	INVALID = 0;

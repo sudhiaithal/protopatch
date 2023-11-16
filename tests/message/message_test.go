@@ -6,7 +6,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"google.golang.org/protobuf/proto"
 
-	"github.com/alta/protopatch/tests"
+	"github.com/sudhiaithal/protopatch/tests"
 )
 
 func TestBasicMessage(t *testing.T) {

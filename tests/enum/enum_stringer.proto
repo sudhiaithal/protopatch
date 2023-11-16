@@ -6,7 +6,7 @@ package tests.enum;
 
 import "patch/go.proto";
 
-option go_package = "github.com/alta/protopatch/tests/enum";
+option go_package = "github.com/sudhiaithal/protopatch/tests/enum";
 
 enum CustomStringerEnum {
 	option (go.enum).stringer = 'OrigString';
