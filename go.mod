@@ -1,6 +1,17 @@
-module github.com/alta/protopatch
+module github.com/sudhiaithal/protopatch
 
-go 1.20
+go 1.13
+
+replace golang.org/x/tools => golang.org/x/tools v0.0.0-20210106214847-113979e3529a
+
+replace golang.org/x/crypto v0.12.0 => golang.org/x/crypto v0.0.0-20181015023909-0c41d7ab0a0e
+
+replace golang.org/x/net => golang.org/x/net v0.0.0-20200324143707-d3edc9973b7e
+
+replace golang.org/x/sys => golang.org/x/sys v0.0.0-20190429190828-d89cdac9e872
+
+replace golang.org/x/sync v0.3.0 => golang.org/x/sync v0.0.0-20180314180146-1d60e4601c6f
+
 
 require (
 	github.com/envoyproxy/protoc-gen-validate v1.0.2
