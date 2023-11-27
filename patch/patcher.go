@@ -33,45 +33,49 @@ import (
 // - (go.enum).name overrides the name of an enum type.
 // - (go.value).name overrides the name of an enum value.
 type Patcher struct {
-	gen            *protogen.Plugin
-	fset           *token.FileSet
-	filesByName    map[string]*ast.File
-	info           *types.Info
-	packages       []*Package
-	packagesByPath map[string]*Package
-	packagesByName map[string]*Package
-	renames        map[protogen.GoIdent]string
-	typeRenames    map[protogen.GoIdent]string
-	valueRenames   map[protogen.GoIdent]string
-	fieldRenames   map[protogen.GoIdent]string
-	methodRenames  map[protogen.GoIdent]string
-	objectRenames  map[types.Object]string
-	tags           map[protogen.GoIdent]string
-	fieldTags      map[types.Object]string
-	embeds         map[protogen.GoIdent]string
-	fieldEmbeds    map[types.Object]string
-	types          map[protogen.GoIdent]string
-	fieldTypes     map[types.Object]string
+	gen               *protogen.Plugin
+	fset              *token.FileSet
+	filesByName       map[string]*ast.File
+	info              *types.Info
+	packages          []*Package
+	packagesByPath    map[string]*Package
+	packagesByName    map[string]*Package
+	renames           map[protogen.GoIdent]string
+	typeRenames       map[protogen.GoIdent]string
+	valueRenames      map[protogen.GoIdent]string
+	fieldRenames      map[protogen.GoIdent]string
+	methodRenames     map[protogen.GoIdent]string
+	objectRenames     map[types.Object]string
+	tags              map[protogen.GoIdent]string
+	fieldTags         map[types.Object]string
+	embeds            map[protogen.GoIdent]string
+	nonNullables      map[protogen.GoIdent]string
+	fieldEmbeds       map[types.Object]string
+	fieldNonNullables map[types.Object]string
+	types             map[protogen.GoIdent]string
+	fieldTypes        map[types.Object]string
 }
 
 // NewPatcher returns an initialized Patcher for gen.
 func NewPatcher(gen *protogen.Plugin) (*Patcher, error) {
 	p := &Patcher{
-		gen:            gen,
-		packagesByPath: make(map[string]*Package),
-		packagesByName: make(map[string]*Package),
-		renames:        make(map[protogen.GoIdent]string),
-		typeRenames:    make(map[protogen.GoIdent]string),
-		valueRenames:   make(map[protogen.GoIdent]string),
-		fieldRenames:   make(map[protogen.GoIdent]string),
-		methodRenames:  make(map[protogen.GoIdent]string),
-		objectRenames:  make(map[types.Object]string),
-		tags:           make(map[protogen.GoIdent]string),
-		fieldTags:      make(map[types.Object]string),
-		embeds:         make(map[protogen.GoIdent]string),
-		fieldEmbeds:    make(map[types.Object]string),
-		types:          make(map[protogen.GoIdent]string),
-		fieldTypes:     make(map[types.Object]string),
+		gen:               gen,
+		packagesByPath:    make(map[string]*Package),
+		packagesByName:    make(map[string]*Package),
+		renames:           make(map[protogen.GoIdent]string),
+		typeRenames:       make(map[protogen.GoIdent]string),
+		valueRenames:      make(map[protogen.GoIdent]string),
+		fieldRenames:      make(map[protogen.GoIdent]string),
+		methodRenames:     make(map[protogen.GoIdent]string),
+		objectRenames:     make(map[types.Object]string),
+		tags:              make(map[protogen.GoIdent]string),
+		fieldTags:         make(map[types.Object]string),
+		embeds:            make(map[protogen.GoIdent]string),
+		nonNullables:      make(map[protogen.GoIdent]string),
+		fieldEmbeds:       make(map[types.Object]string),
+		fieldNonNullables: make(map[types.Object]string),
+		types:             make(map[protogen.GoIdent]string),
+		fieldTypes:        make(map[types.Object]string),
 	}
 	return p, p.scan()
 }
@@ -252,8 +256,8 @@ func (p *Patcher) scanOneof(o *protogen.Oneof) {
 		newName = lint.Name(newName, lints.InitialismsMap())
 	}
 	if newName != "" {
-		p.RenameField(ident.WithChild(m.GoIdent, o.GoName), newName, false)       // Oneof
-		p.RenameMethod(ident.WithChild(m.GoIdent, "Get"+o.GoName), "Get"+newName) // Getter
+		p.RenameField(ident.WithChild(m.GoIdent, o.GoName), newName, false, false) // Oneof
+		p.RenameMethod(ident.WithChild(m.GoIdent, "Get"+o.GoName), "Get"+newName)  // Getter
 		ifName := ident.WithPrefix(o.GoIdent, "is")
 		newIfName := "is" + p.nameFor(m.GoIdent) + "_" + newName
 		p.RenameType(ifName, newIfName)                                   // Interface type (e.g. isExample_Person)
@@ -300,6 +304,20 @@ func (p *Patcher) scanField(f *protogen.Field) {
 			}
 		}
 	}
+	// Nullable  field ?
+	nullable := true
+	if opts != nil && opts.Nullable != nil {
+		switch {
+		case f.Message == nil:
+			log.Printf("Warning: nullable declared for non-message field: %s", f.Desc.Name())
+		case f.Oneof != nil:
+			log.Printf("Warning: nullable declared for oneof field: %s", f.Desc.Name())
+		default:
+			if !*opts.Nullable {
+				nullable = false
+			}
+		}
+	}
 	if lints.GetFields() || lints.GetAll() {
 		if newName == "" {
 			newName = f.GoName
@@ -308,14 +326,16 @@ func (p *Patcher) scanField(f *protogen.Field) {
 	}
 	if newName != "" {
 		if o != nil {
-			p.RenameType(f.GoIdent, p.nameFor(m.GoIdent)+"_"+newName)           // Oneof wrapper struct
-			p.RenameField(ident.WithChild(f.GoIdent, f.GoName), newName, false) // Oneof wrapper field (not embeddable)
+			p.RenameType(f.GoIdent, p.nameFor(m.GoIdent)+"_"+newName)                  // Oneof wrapper struct
+			p.RenameField(ident.WithChild(f.GoIdent, f.GoName), newName, false, false) // Oneof wrapper field (not embeddable)
 			ifName := ident.WithPrefix(o.GoIdent, "is")
 			p.RenameMethod(ident.WithChild(f.GoIdent, ifName.GoName), p.nameFor(ifName)) // Oneof interface method
 		} else {
-			p.RenameField(ident.WithChild(m.GoIdent, f.GoName), newName, embed) // Field
+			p.RenameField(ident.WithChild(m.GoIdent, f.GoName), newName, embed, nullable) // Field
 		}
 		p.RenameMethod(ident.WithChild(m.GoIdent, "Get"+f.GoName), "Get"+newName) // Getter
+	} else {
+		p.RenameField(ident.WithChild(m.GoIdent, f.GoName), newName, embed, nullable) // Field
 	}
 
 	// check type
@@ -388,11 +408,14 @@ func (p *Patcher) RenameValue(id protogen.GoIdent, newName string) {
 // The id argument specifies a GoName from GoImportPath, e.g.: "github.com/org/repo/example".FooMessage.BarField
 // newName should be the unqualified name (after the dot).
 // The value of id.GoName should be the original generated identifier name, not a renamed identifier.
-func (p *Patcher) RenameField(id protogen.GoIdent, newName string, embed bool) {
+func (p *Patcher) RenameField(id protogen.GoIdent, newName string, embed, nullable bool) {
 	p.renames[id] = newName
 	p.fieldRenames[id] = newName
 	if embed {
 		p.embeds[id] = newName
+	}
+	if !nullable {
+		p.nonNullables[id] = newName
 	}
 	log.Printf("Rename field:\t%s.%s → %s", id.GoImportPath, id.GoName, newName)
 }
@@ -571,6 +594,9 @@ func (p *Patcher) checkGoFiles() error {
 		if _, ok := p.embeds[id]; ok {
 			p.fieldEmbeds[obj] = name
 		}
+		if _, ok := p.nonNullables[id]; ok {
+			p.fieldNonNullables[obj] = name
+		}
 	}
 
 	// Map cast types
@@ -744,6 +770,17 @@ func (p *Patcher) patchGoFiles() error {
 }
 
 func (p *Patcher) patchIdent(id *ast.Ident, obj types.Object, isDecl bool) {
+	if _, ok := p.fieldNonNullables[obj]; ok && isDecl {
+		log.Printf("Renamed %s:\t%s → %s (non-nullable)", typeString(obj), id.Name)
+		switch t := id.Obj.Decl.(type) {
+		case *ast.Field:
+			switch t.Type.(type) {
+			case *ast.StarExpr:
+				t.Type = &ast.Ident{
+					Name: ""}
+			}
+		}
+	}
 	name := p.objectRenames[obj]
 	if name == "" {
 		// log.Printf("Unresolved:\t%v", id)
