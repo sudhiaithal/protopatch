@@ -741,6 +741,23 @@ func (p *Patcher) serializeGoFiles(res *pluginpb.CodeGeneratorResponse) error {
 	return nil
 }
 
+func (p *Patcher) getFuncDecl(name string) *ast.FuncDecl {
+
+	for _, f := range p.filesByName {
+		for _, decl := range f.Decls {
+			switch decl.(type) {
+			case *ast.FuncDecl:
+				if decl.(*ast.FuncDecl).Name.Name == name {
+					return decl.(*ast.FuncDecl)
+
+				}
+			}
+		}
+	}
+	return nil
+
+}
+
 func (p *Patcher) patchGoFiles() error {
 	log.Printf("\nDefs")
 	for id, obj := range p.info.Defs {
@@ -770,26 +787,65 @@ func (p *Patcher) patchGoFiles() error {
 }
 
 func (p *Patcher) patchIdent(id *ast.Ident, obj types.Object, isDecl bool) {
-	if _, ok := p.fieldNonNullables[obj]; ok && isDecl {
-		log.Printf("Renamed %s:\t%s → %s (non-nullable)", typeString(obj), id.Name)
-		switch t := id.Obj.Decl.(type) {
-		case *ast.Field:
-			switch t.Type.(type) {
-			case *ast.StarExpr:
-				t.Type = &ast.Ident{
-					Name: ""}
+
+	name := p.objectRenames[obj]
+	setNonNullable := func(name string) {
+		if _, ok := p.fieldNonNullables[obj]; ok && isDecl {
+			log.Printf("Renamed %s: → %s (non-nullable)", typeString(obj), id.Name)
+			switch t := id.Obj.Decl.(type) {
+			case *ast.Field:
+				switch t.Type.(type) {
+				case *ast.StarExpr:
+					if name == "" {
+						name = t.Type.(*ast.StarExpr).X.(*ast.Ident).Name
+					}
+					t.Type = &ast.Ident{
+						Name: name}
+				}
 			}
 		}
 	}
-	name := p.objectRenames[obj]
+
+	patchIdentGetFunc := func() {
+
+		funcDecl := p.getFuncDecl(id.Name)
+		if funcDecl == nil {
+			return
+		}
+		fieldName := strings.TrimPrefix(id.Name, "Get")
+		for idx := range p.fieldNonNullables {
+			if idx.Name() == fieldName && idx.Pkg().Name() == obj.(*types.Func).Pkg().Name() {
+				for _, field := range funcDecl.Type.Results.List {
+					switch t1 := field.Type.(type) {
+					case *ast.StarExpr:
+						log.Printf("Changed return for method %v from *%s : → %s (non-nullable)",
+							idx.Name, t1.X.(*ast.Ident).Name, t1.X.(*ast.Ident).Name)
+						field.Type = &ast.Ident{
+							Name: t1.X.(*ast.Ident).Name}
+						for _, stmt := range funcDecl.Body.List {
+							switch t2 := stmt.(type) {
+							case *ast.ReturnStmt:
+								for i := range t2.Results {
+									t2.Results[i].(*ast.Ident).Name = fmt.Sprintf("%v{}", t1.X.(*ast.Ident).Name)
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+
+	patchIdentGetFunc()
 	if name == "" {
-		// log.Printf("Unresolved:\t%v", id)
+		setNonNullable(name)
 		return
 	}
 	p.patchComments(id, name)
 	if _, ok := p.fieldEmbeds[obj]; ok && isDecl {
 		log.Printf("Renamed %s:\t%s → %s (embedded)", typeString(obj), id.Name, name)
 		id.Name = ""
+		setNonNullable(name)
 	} else {
 		log.Printf("Renamed %s:\t%s → %s", typeString(obj), id.Name, name)
 		id.Name = name
