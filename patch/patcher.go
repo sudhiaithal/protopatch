@@ -797,6 +797,10 @@ func (p *Patcher) patchIdent(id *ast.Ident, obj types.Object, isDecl bool) {
 				switch t.Type.(type) {
 				case *ast.StarExpr:
 					if name == "" {
+						_, ok := t.Type.(*ast.StarExpr).X.(*ast.Ident)
+						if !ok {
+							return
+						}
 						name = t.Type.(*ast.StarExpr).X.(*ast.Ident).Name
 					}
 					t.Type = &ast.Ident{
@@ -818,6 +822,10 @@ func (p *Patcher) patchIdent(id *ast.Ident, obj types.Object, isDecl bool) {
 				for _, field := range funcDecl.Type.Results.List {
 					switch t1 := field.Type.(type) {
 					case *ast.StarExpr:
+						_, ok := t1.X.(*ast.Ident)
+						if !ok {
+							continue
+						}
 						log.Printf("Changed return for method %v from *%s : → %s (non-nullable)",
 							idx.Name, t1.X.(*ast.Ident).Name, t1.X.(*ast.Ident).Name)
 						field.Type = &ast.Ident{
