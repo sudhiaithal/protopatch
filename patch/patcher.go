@@ -794,13 +794,15 @@ func (p *Patcher) patchIdent(id *ast.Ident, obj types.Object, isDecl bool) {
 			log.Printf("Renamed %s: → %s (non-nullable)", typeString(obj), id.Name)
 			switch t := id.Obj.Decl.(type) {
 			case *ast.Field:
-				switch t.Type.(type) {
+				switch t1 := t.Type.(type) {
 				case *ast.StarExpr:
+					switch t2 := t1.X.(type) {
+					case *ast.Ident:
+						name = t2.Name
+					case *ast.SelectorExpr:
+						name = fmt.Sprintf("%v", t2.X) + "." + t2.Sel.Name
+					}
 					if name == "" {
-						_, ok := t.Type.(*ast.StarExpr).X.(*ast.Ident)
-						if !ok {
-							return
-						}
 						name = t.Type.(*ast.StarExpr).X.(*ast.Ident).Name
 					}
 					t.Type = &ast.Ident{
@@ -822,19 +824,21 @@ func (p *Patcher) patchIdent(id *ast.Ident, obj types.Object, isDecl bool) {
 				for _, field := range funcDecl.Type.Results.List {
 					switch t1 := field.Type.(type) {
 					case *ast.StarExpr:
-						_, ok := t1.X.(*ast.Ident)
-						if !ok {
-							continue
-						}
 						log.Printf("Changed return for method %v from *%s : → %s (non-nullable)",
-							idx.Name, t1.X.(*ast.Ident).Name, t1.X.(*ast.Ident).Name)
-						field.Type = &ast.Ident{
-							Name: t1.X.(*ast.Ident).Name}
+							idx.Name, t1.X, t1.X)
+						switch t3 := t1.X.(type) {
+						case *ast.Ident:
+							field.Type = &ast.Ident{
+								Name: t3.Name}
+						case *ast.SelectorExpr:
+							field.Type = &ast.Ident{
+								Name: fmt.Sprintf("%v", t3.X) + "." + t3.Sel.Name}
+						}
 						for _, stmt := range funcDecl.Body.List {
 							switch t2 := stmt.(type) {
 							case *ast.ReturnStmt:
 								for i := range t2.Results {
-									t2.Results[i].(*ast.Ident).Name = fmt.Sprintf("%v{}", t1.X.(*ast.Ident).Name)
+									t2.Results[i].(*ast.Ident).Name = fmt.Sprintf("%v{}", fmt.Sprintf("%v", field.Type))
 								}
 							}
 						}
