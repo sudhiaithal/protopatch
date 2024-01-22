@@ -291,6 +291,7 @@ func (p *Patcher) scanField(f *protogen.Field) {
 	if opts.GetEmbed() {
 		switch {
 		case f.Message == nil:
+			//TODO
 			log.Printf("Warning: embed declared for non-message field: %s", f.Desc.Name())
 		case f.Oneof != nil:
 			log.Printf("Warning: embed declared for oneof field: %s", f.Desc.Name())
@@ -741,20 +742,21 @@ func (p *Patcher) serializeGoFiles(res *pluginpb.CodeGeneratorResponse) error {
 	return nil
 }
 
-func (p *Patcher) getFuncDecl(name string) *ast.FuncDecl {
+func (p *Patcher) getFuncDecls(name string) []*ast.FuncDecl {
 
+	var decls []*ast.FuncDecl
 	for _, f := range p.filesByName {
 		for _, decl := range f.Decls {
 			switch decl.(type) {
 			case *ast.FuncDecl:
 				if decl.(*ast.FuncDecl).Name.Name == name {
-					return decl.(*ast.FuncDecl)
+					decls = append(decls, decl.(*ast.FuncDecl))
 
 				}
 			}
 		}
 	}
-	return nil
+	return decls
 
 }
 
@@ -814,31 +816,33 @@ func (p *Patcher) patchIdent(id *ast.Ident, obj types.Object, isDecl bool) {
 
 	patchIdentGetFunc := func() {
 
-		funcDecl := p.getFuncDecl(id.Name)
+		funcDecls := p.getFuncDecls(id.Name)
 		if funcDecl == nil {
 			return
 		}
 		fieldName := strings.TrimPrefix(id.Name, "Get")
 		for idx := range p.fieldNonNullables {
 			if idx.Name() == fieldName && idx.Pkg().Name() == obj.(*types.Func).Pkg().Name() {
-				for _, field := range funcDecl.Type.Results.List {
-					switch t1 := field.Type.(type) {
-					case *ast.StarExpr:
-						log.Printf("Changed return for method %v from *%s : → %s (non-nullable)",
-							idx.Name, t1.X, t1.X)
-						switch t3 := t1.X.(type) {
-						case *ast.Ident:
-							field.Type = &ast.Ident{
-								Name: t3.Name}
-						case *ast.SelectorExpr:
-							field.Type = &ast.Ident{
-								Name: fmt.Sprintf("%v", t3.X) + "." + t3.Sel.Name}
-						}
-						for _, stmt := range funcDecl.Body.List {
-							switch t2 := stmt.(type) {
-							case *ast.ReturnStmt:
-								for i := range t2.Results {
-									t2.Results[i].(*ast.Ident).Name = fmt.Sprintf("%v{}", fmt.Sprintf("%v", field.Type))
+				for _, funcDecl := range funcDecls {
+					for _, field := range funcDecl.Type.Results.List {
+						switch t1 := field.Type.(type) {
+						case *ast.StarExpr:
+							log.Printf("Changed return for method %v from *%s : → %s (non-nullable)",
+								idx.Name, t1.X, t1.X)
+							switch t3 := t1.X.(type) {
+							case *ast.Ident:
+								field.Type = &ast.Ident{
+									Name: t3.Name}
+							case *ast.SelectorExpr:
+								field.Type = &ast.Ident{
+									Name: fmt.Sprintf("%v", t3.X) + "." + t3.Sel.Name}
+							}
+							for _, stmt := range funcDecl.Body.List {
+								switch t2 := stmt.(type) {
+								case *ast.ReturnStmt:
+									for i := range t2.Results {
+										t2.Results[i].(*ast.Ident).Name = fmt.Sprintf("%v{}", fmt.Sprintf("%v", field.Type))
+									}
 								}
 							}
 						}
