@@ -817,7 +817,7 @@ func (p *Patcher) patchIdent(id *ast.Ident, obj types.Object, isDecl bool) {
 	patchIdentGetFunc := func() {
 
 		funcDecls := p.getFuncDecls(id.Name)
-		if funcDecl == nil {
+		if funcDecls == nil || len(funcDecls) == 0 {
 			return
 		}
 		fieldName := strings.TrimPrefix(id.Name, "Get")
