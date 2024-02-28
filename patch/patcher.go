@@ -50,8 +50,10 @@ type Patcher struct {
 	fieldTags         map[types.Object]string
 	embeds            map[protogen.GoIdent]string
 	nonNullables      map[protogen.GoIdent]string
+	parentMap         map[protogen.GoIdent]string
 	fieldEmbeds       map[types.Object]string
 	fieldNonNullables map[types.Object]string
+	fieldParentMap    map[types.Object]string
 	types             map[protogen.GoIdent]string
 	fieldTypes        map[types.Object]string
 }
@@ -73,6 +75,8 @@ func NewPatcher(gen *protogen.Plugin) (*Patcher, error) {
 		embeds:            make(map[protogen.GoIdent]string),
 		nonNullables:      make(map[protogen.GoIdent]string),
 		fieldEmbeds:       make(map[types.Object]string),
+		parentMap:         make(map[protogen.GoIdent]string),
+		fieldParentMap:    make(map[types.Object]string),
 		fieldNonNullables: make(map[types.Object]string),
 		types:             make(map[protogen.GoIdent]string),
 		fieldTypes:        make(map[types.Object]string),
@@ -257,7 +261,8 @@ func (p *Patcher) scanOneof(o *protogen.Oneof) {
 	}
 	if newName != "" {
 		p.RenameField(ident.WithChild(m.GoIdent, o.GoName), newName, false, false) // Oneof
-		p.RenameMethod(ident.WithChild(m.GoIdent, "Get"+o.GoName), "Get"+newName)  // Getter
+		p.parentMap[ident.WithChild(m.GoIdent, o.GoName)] = string(m.Desc.Name())
+		p.RenameMethod(ident.WithChild(m.GoIdent, "Get"+o.GoName), "Get"+newName) // Getter
 		ifName := ident.WithPrefix(o.GoIdent, "is")
 		newIfName := "is" + p.nameFor(m.GoIdent) + "_" + newName
 		p.RenameType(ifName, newIfName)                                   // Interface type (e.g. isExample_Person)
@@ -325,18 +330,25 @@ func (p *Patcher) scanField(f *protogen.Field) {
 		}
 		newName = lint.Name(newName, lints.InitialismsMap())
 	}
+	log.Printf("Child %s, parent", f.Desc.Name(), m.Desc.Name())
 	if newName != "" {
 		if o != nil {
 			p.RenameType(f.GoIdent, p.nameFor(m.GoIdent)+"_"+newName)                  // Oneof wrapper struct
 			p.RenameField(ident.WithChild(f.GoIdent, f.GoName), newName, false, false) // Oneof wrapper field (not embeddable)
 			ifName := ident.WithPrefix(o.GoIdent, "is")
 			p.RenameMethod(ident.WithChild(f.GoIdent, ifName.GoName), p.nameFor(ifName)) // Oneof interface method
+			childID := ident.WithChild(f.GoIdent, ifName.GoName)
+			p.parentMap[childID] = string(m.Desc.Name())
 		} else {
 			p.RenameField(ident.WithChild(m.GoIdent, f.GoName), newName, embed, nullable) // Field
+			childID := ident.WithChild(m.GoIdent, f.GoName)
+			p.parentMap[childID] = string(m.Desc.Name())
 		}
 		p.RenameMethod(ident.WithChild(m.GoIdent, "Get"+f.GoName), "Get"+newName) // Getter
 	} else {
 		p.RenameField(ident.WithChild(m.GoIdent, f.GoName), newName, embed, nullable) // Field
+		childID := ident.WithChild(m.GoIdent, f.GoName)
+		p.parentMap[childID] = string(m.Desc.Name())
 	}
 
 	// check type
@@ -592,6 +604,10 @@ func (p *Patcher) checkGoFiles() error {
 			continue
 		}
 		p.objectRenames[obj] = name
+		if _, ok := p.parentMap[id]; ok {
+			p.fieldParentMap[obj] = p.parentMap[id]
+			log.Printf("Adding parent reference %v fo field  %v", p.parentMap[id], obj)
+		}
 		if _, ok := p.embeds[id]; ok {
 			p.fieldEmbeds[obj] = name
 		}
@@ -824,9 +840,18 @@ func (p *Patcher) patchIdent(id *ast.Ident, obj types.Object, isDecl bool) {
 		for idx := range p.fieldNonNullables {
 			if idx.Name() == fieldName && idx.Pkg().Name() == obj.(*types.Func).Pkg().Name() {
 				for _, funcDecl := range funcDecls {
+					className := ""
+					for _, param := range funcDecl.Recv.List {
+						className = fmt.Sprintf("%s", param.Type.(*ast.StarExpr).X)
+					}
+					if p.fieldParentMap[idx] != className {
+						log.Printf("Skipping as class name %v does not match of function %v does not match to rename field's class name %v", className, obj.(*types.Func).Name(), p.fieldParentMap[idx])
+						continue
+					}
 					for _, field := range funcDecl.Type.Results.List {
 						switch t1 := field.Type.(type) {
 						case *ast.StarExpr:
+
 							log.Printf("Changed return for method %v from *%s : → %s (non-nullable)",
 								idx.Name, t1.X, t1.X)
 							switch t3 := t1.X.(type) {
