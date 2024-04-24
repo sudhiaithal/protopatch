@@ -15,10 +15,14 @@ import (
 	"strings"
 
 	"github.com/fatih/structtag"
+	"github.com/sudhiaithal/protopatch/patch/gopb"
 	"golang.org/x/tools/go/ast/astutil"
 	"google.golang.org/protobuf/cmd/protoc-gen-go/internal_gengo"
 	"google.golang.org/protobuf/compiler/protogen"
 	"google.golang.org/protobuf/types/pluginpb"
+
+	"github.com/golang/protobuf/proto"
+	"google.golang.org/protobuf/types/descriptorpb"
 
 	"github.com/sudhiaithal/protopatch/lint"
 	"github.com/sudhiaithal/protopatch/patch/ident"
@@ -56,6 +60,7 @@ type Patcher struct {
 	fieldParentMap    map[types.Object]string
 	types             map[protogen.GoIdent]string
 	fieldTypes        map[types.Object]string
+	processedMessages map[protogen.GoIdent]bool
 }
 
 // NewPatcher returns an initialized Patcher for gen.
@@ -80,15 +85,142 @@ func NewPatcher(gen *protogen.Plugin) (*Patcher, error) {
 		fieldNonNullables: make(map[types.Object]string),
 		types:             make(map[protogen.GoIdent]string),
 		fieldTypes:        make(map[types.Object]string),
+		processedMessages: make(map[protogen.GoIdent]bool),
 	}
 	return p, p.scan()
+}
+
+func getExtensionDesc(pb proto.Message, extname string) (*proto.ExtensionDesc, error) {
+	desc := proto.RegisteredExtensions(pb)
+	for _, d := range desc {
+		if d.Name == extname {
+			return d, nil
+		}
+	}
+	return nil, fmt.Errorf("ExtensionDesc not found")
+}
+
+func getExtension(pb proto.Message, extname string) (interface{}, error) {
+	d, err := getExtensionDesc(pb, extname)
+	if err != nil {
+		return nil, err
+	}
+	e, err := proto.GetExtension(pb, d)
+	if err != nil {
+		return nil, err
+	}
+	return e, err
 }
 
 func (p *Patcher) scan() error {
 	for _, f := range p.gen.Files {
 		p.scanFile(f)
 	}
+
+	for _, f := range p.gen.Request.ProtoFile {
+		found := false
+		mident := protogen.GoIdent{GoName: "", GoImportPath: ""}
+		fident := protogen.GoIdent{GoName: "", GoImportPath: ""}
+		for _, genFile := range p.gen.Files {
+			if *f.Name == genFile.Desc.Path() {
+				found = true
+				mident = protogen.GoIdent{GoName: "", GoImportPath: genFile.GoImportPath}
+				fident = protogen.GoIdent{GoName: "", GoImportPath: genFile.GoImportPath}
+				break
+			}
+		}
+		if !found {
+			panic("Not found")
+		}
+		for _, m := range f.MessageType {
+			mident.GoName = *m.Name
+			if _, ok := p.processedMessages[mident]; ok {
+				continue
+			}
+			for _, msgfield := range m.Field {
+				fident.GoName = *msgfield.Name
+				p.scanProtoField(mident, fident, msgfield)
+			}
+		}
+	}
+
 	return nil
+}
+
+func (p *Patcher) scanProtoField(mident protogen.GoIdent, fident protogen.GoIdent, f *descriptorpb.FieldDescriptorProto) {
+	//m := f.Parent
+	//o := f.Oneof
+
+	if f.TypeName == nil {
+		return
+	}
+	fi, err := getExtension(f.GetOptions(), "go.field")
+	if err != nil {
+		return
+	}
+	opts := fi.(*gopb.Options)
+
+	log.Printf("Parent Message %v (%v), opts %v", *f.Name, *f.TypeName, opts)
+	// Embed field ?
+	embed := false
+	newName := ""
+	if opts.GetEmbed() {
+		switch {
+		//case f.Message == nil:
+		//TODO
+		//log.Printf("Warning: embed declared for non-message field: %s", f.Desc.Name())
+		//case f.Oneof != nil:
+		//log.Printf("Warning: embed declared for oneof field: %s", f.Desc.Name())
+		default:
+			embed = true
+			log.Printf("Embed Set %v ", *f.Name, *f.TypeName)
+			splitStrings := strings.Split((*f.TypeName)[1:], ".")
+			newName = splitStrings[len(splitStrings)-1]
+			// use the embed field message type's go name or rename option if defined
+			/*if mOpts := messageOptions(f.Message); mOpts.GetName() != "" {
+				newName = mOpts.GetName()
+			} else {
+				newName = f.Message.GoIdent.GoName
+			}*/
+		}
+	}
+	// Nullable  field ?
+	nullable := true
+	if opts != nil && opts.Nullable != nil {
+		switch {
+		//case f.Message == nil:
+		//log.Printf("Warning: nullable declared for non-message field: %s", f.Desc.Name())
+		//case f.Oneof != nil:
+		//log.Printf("Warning: nullable declared for oneof field: %s", f.Desc.Name())
+		default:
+			if !*opts.Nullable {
+				nullable = false
+			}
+		}
+	}
+	if newName != "" {
+		//if o != nil {
+		if false {
+			p.RenameType(fident, p.nameFor(mident)+"_"+newName)                          // Oneof wrapper struct
+			p.RenameField(ident.WithChild(fident, fident.GoName), newName, false, false) // Oneof wrapper field (not embeddable)
+			//ifName := ident.WithPrefix(o.GoIdent, "is")
+			//p.RenameMethod(ident.WithChild(f.GoIdent, ifName.GoName), p.nameFor(ifName)) // Oneof interface method
+			//childID := ident.WithChild(f.GoIdent, ifName.GoName)
+			//p.parentMap[childID] = string(m.Desc.Name())
+		} else {
+			p.RenameField(ident.WithChild(mident, fident.GoName), newName, embed, nullable) // Field
+			childID := ident.WithChild(mident, fident.GoName)
+			p.parentMap[childID] = string(mident.GoName)
+			log.Printf("child %v parent %v", childID, mident.GoName)
+			//childID := ident.WithChild(mident, fident.GoName)
+			//p.parentMap[childID] = string(m.Desc.Name())
+		}
+		p.RenameMethod(ident.WithChild(mident, "Get"+fident.GoName), "Get"+newName) // Getter
+	} else {
+		p.RenameField(ident.WithChild(mident, fident.GoName), newName, embed, nullable) // Field
+		childID := ident.WithChild(mident, fident.GoName)
+		p.parentMap[childID] = string(mident.GoName)
+	}
 }
 
 func (p *Patcher) scanFile(f *protogen.File) {
@@ -198,6 +330,7 @@ func (p *Patcher) scanMessage(m *protogen.Message, parent *protogen.Message) {
 	opts := messageOptions(m)
 	lints := fileLintOptions(m.Desc)
 
+	p.processedMessages[m.GoIdent] = true
 	// Rename message?
 	newName := opts.GetName()
 	if newName == "" && parent != nil && p.isRenamed(parent.GoIdent) {
@@ -809,7 +942,7 @@ func (p *Patcher) patchIdent(id *ast.Ident, obj types.Object, isDecl bool) {
 	name := p.objectRenames[obj]
 	setNonNullable := func(name string) {
 		if _, ok := p.fieldNonNullables[obj]; ok && isDecl {
-			log.Printf("Renamed %s: → %s (non-nullable)", typeString(obj), id.Name)
+			log.Printf("Renamed %s: → %s (non-nullable) %v", typeString(obj), id.Name, id.Obj)
 			switch t := id.Obj.Decl.(type) {
 			case *ast.Field:
 				switch t1 := t.Type.(type) {
