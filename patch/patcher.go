@@ -738,7 +738,14 @@ func (p *Patcher) checkGoFiles() error {
 		}
 		p.objectRenames[obj] = name
 		if _, ok := p.parentMap[id]; ok {
-			p.fieldParentMap[obj] = p.parentMap[id]
+			splits := strings.Split(obj.Type().String(), ".")
+			parentNames := strings.Split(splits[len(splits)-1], "_")
+			if len(parentNames) > 2 {
+				parentNames = parentNames[0 : len(parentNames)-1]
+				p.fieldParentMap[obj] = strings.Join(parentNames, "_")
+			} else {
+				p.fieldParentMap[obj] = p.parentMap[id]
+			}
 			log.Printf("Adding parent reference %v fo field  %v", p.parentMap[id], obj)
 		}
 		if _, ok := p.embeds[id]; ok {
