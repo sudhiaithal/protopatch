@@ -945,6 +945,7 @@ func (p *Patcher) patchIdent(id *ast.Ident, obj types.Object, isDecl bool) {
 			log.Printf("Renamed %s: → %s (non-nullable) %v", typeString(obj), id.Name, id.Obj)
 			switch t := id.Obj.Decl.(type) {
 			case *ast.Field:
+				log.Printf("Matched Renamed %s: → %s (non-nullable) %v", typeString(obj), id.Name, id.Obj)
 				switch t1 := t.Type.(type) {
 				case *ast.StarExpr:
 					switch t2 := t1.X.(type) {
@@ -958,23 +959,26 @@ func (p *Patcher) patchIdent(id *ast.Ident, obj types.Object, isDecl bool) {
 					}
 					t.Type = &ast.Ident{
 						Name: name}
+				case *ast.ArrayType:
+					switch t3 := t1.Elt.(type) {
+					case *ast.StarExpr:
+						switch t4 := t3.X.(type) {
+						case *ast.Ident:
+							name = t4.Name
+						case *ast.SelectorExpr:
+							name = fmt.Sprintf("%v", t4.X) + "." + t4.Sel.Name
+						default:
+							log.Printf("Array  Renamed %s: → %s (non-nullable) %v %T", typeString(obj), id.Name, id.Obj, t3)
+						}
+						if name == "" {
+							name = t1.Elt.(*ast.StarExpr).X.(*ast.Ident).Name
+						}
+						//t1.Elt = &ast.Ident{
+						//	Name: name}
+						t.Type = &ast.ArrayType{
+							Elt: &ast.Ident{Name: name}}
+					}
 				}
-			case *ast.ArrayType:
-				switch t3 := t1.Elt.(type) {
-				case *ast.StarExpr:
-				switch t4 := t3.X.(type) {
-				case *ast.Ident:
-						name = t4.Name
-				case *ast.SelectorExpr:
-						name = fmt.Sprintf("%v", t4.X) + "." + t4.Sel.Name
-				default:
-						log.Printf("Array  Renamed %s: → %s (non-nullable) %v %T", typeString(obj), id.Name, id.Obj, t3)
-				}
-				if name == "" {
-						name = t1.Elt.(*ast.StarExpr).X.(*ast.Ident).Name
-				}
-				t.Type = &ast.ArrayType{
-						Elt: &ast.Ident{Name : name}}
 			}
 		}
 	}
@@ -1018,6 +1022,19 @@ func (p *Patcher) patchIdent(id *ast.Ident, obj types.Object, isDecl bool) {
 										t2.Results[i].(*ast.Ident).Name = fmt.Sprintf("%v{}", fmt.Sprintf("%v", field.Type))
 									}
 								}
+							}
+						case *ast.ArrayType:
+							switch t3 := t1.Elt.(type) {
+							case *ast.StarExpr:
+								switch t4 := t3.X.(type) {
+								case *ast.Ident:
+									field.Type = &ast.ArrayType{
+										Elt: &ast.Ident{Name: t4.Name}}
+								case *ast.SelectorExpr:
+									field.Type = &ast.ArrayType{
+										Elt: &ast.Ident{Name: fmt.Sprintf("%v", t4.X) + "." + t4.Sel.Name}}
+								}
+								//No need to patch return for non-nullable repeated
 							}
 						}
 					}
