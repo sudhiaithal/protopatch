@@ -959,6 +959,22 @@ func (p *Patcher) patchIdent(id *ast.Ident, obj types.Object, isDecl bool) {
 					t.Type = &ast.Ident{
 						Name: name}
 				}
+			case *ast.ArrayType:
+				switch t3 := t1.Elt.(type) {
+				case *ast.StarExpr:
+				switch t4 := t3.X.(type) {
+				case *ast.Ident:
+						name = t4.Name
+				case *ast.SelectorExpr:
+						name = fmt.Sprintf("%v", t4.X) + "." + t4.Sel.Name
+				default:
+						log.Printf("Array  Renamed %s: → %s (non-nullable) %v %T", typeString(obj), id.Name, id.Obj, t3)
+				}
+				if name == "" {
+						name = t1.Elt.(*ast.StarExpr).X.(*ast.Ident).Name
+				}
+				t.Type = &ast.ArrayType{
+						Elt: &ast.Ident{Name : name}}
 			}
 		}
 	}
