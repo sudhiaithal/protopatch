@@ -463,7 +463,7 @@ func (p *Patcher) scanField(f *protogen.Field) {
 		}
 		newName = lint.Name(newName, lints.InitialismsMap())
 	}
-	log.Printf("Child %s, parent", f.Desc.Name(), m.Desc.Name())
+	log.Printf("Child %s, parent %v", f.Desc.Name(), m.Desc.Name())
 	if newName != "" {
 		if o != nil {
 			p.RenameType(f.GoIdent, p.nameFor(m.GoIdent)+"_"+newName)                  // Oneof wrapper struct
@@ -738,15 +738,15 @@ func (p *Patcher) checkGoFiles() error {
 		}
 		p.objectRenames[obj] = name
 		if _, ok := p.parentMap[id]; ok {
-			splits := strings.Split(obj.Type().String(), ".")
-			parentNames := strings.Split(splits[len(splits)-1], "_")
-			if len(parentNames) > 2 {
-				parentNames = parentNames[0 : len(parentNames)-1]
-				p.fieldParentMap[obj] = strings.Join(parentNames, "_")
+			//splits := strings.Split(obj.Type().String(), ".")
+			parentNames := strings.Split(id.GoName, ".")
+			if len(parentNames) == 2 {
+				p.fieldParentMap[obj] = parentNames[0]
 			} else {
 				p.fieldParentMap[obj] = p.parentMap[id]
 			}
-			log.Printf("Adding parent reference %v fo field  %v", p.parentMap[id], obj)
+			log.Printf("Adding parent reference (%v) %v fo field  %v parents %v  TS %v Parent %v ", id, p.fieldParentMap[obj], obj, parentNames, obj.Type().String(), p.fieldParentMap[obj])
+
 		}
 		if _, ok := p.embeds[id]; ok {
 			p.fieldEmbeds[obj] = name
@@ -847,7 +847,7 @@ func (p *Patcher) synthesize(id protogen.GoIdent) error {
 // find finds id in all parsed Go packages, along with any ancestor(s),
 // or nil if the id is not found.
 func (p *Patcher) find(id protogen.GoIdent) (obj types.Object, ancestors []types.Object) {
-	pkg := p.getPackage(string(id.GoImportPath), "", false)
+	pkg := p.getPackage(string(id.GoImportPath), "", true)
 	if pkg == nil {
 		return
 	}
@@ -960,6 +960,8 @@ func (p *Patcher) patchIdent(id *ast.Ident, obj types.Object, isDecl bool) {
 						name = t2.Name
 					case *ast.SelectorExpr:
 						name = fmt.Sprintf("%v", t2.X) + "." + t2.Sel.Name
+					default:
+						log.Printf("Defaiult Renamed %s: → %s (non-nullable) %v %T", typeString(obj), id.Name, id.Obj, t2)
 					}
 					if name == "" {
 						name = t.Type.(*ast.StarExpr).X.(*ast.Ident).Name
@@ -985,7 +987,15 @@ func (p *Patcher) patchIdent(id *ast.Ident, obj types.Object, isDecl bool) {
 						t.Type = &ast.ArrayType{
 							Elt: &ast.Ident{Name: name}}
 					}
+					/*			case *ast.Field:
+								switch t2 := t1.Type.(type) {
+								default:
+								log.Printf("Defaiult Renamed %s: → %s (non-nullable) %v %T", typeString(obj), id.Name, id.Obj, t2)
+								} */
 				}
+			default:
+				log.Printf("Defaiult Renamed %s: → %s (non-nullable) %v", typeString(obj), id.Name, id.Obj)
+
 			}
 		}
 	}
@@ -1005,7 +1015,7 @@ func (p *Patcher) patchIdent(id *ast.Ident, obj types.Object, isDecl bool) {
 						className = fmt.Sprintf("%s", param.Type.(*ast.StarExpr).X)
 					}
 					if p.fieldParentMap[idx] != className {
-						log.Printf("Skipping as class name %v does not match of function %v does not match to rename field's class name %v", className, obj.(*types.Func).Name(), p.fieldParentMap[idx])
+						log.Printf("Skipping Function as class name %v does not match of function %v does not match to rename field's class name %v", className, obj.(*types.Func).Name(), p.fieldParentMap[idx])
 						continue
 					}
 					for _, field := range funcDecl.Type.Results.List {
@@ -1041,7 +1051,14 @@ func (p *Patcher) patchIdent(id *ast.Ident, obj types.Object, isDecl bool) {
 									field.Type = &ast.ArrayType{
 										Elt: &ast.Ident{Name: fmt.Sprintf("%v", t4.X) + "." + t4.Sel.Name}}
 								}
-								//No need to patch return for non-nullable repeated
+								/*for _, stmt := range funcDecl.Body.List {
+									switch t2 := stmt.(type) {
+									case *ast.ReturnStmt:
+										for i := range t2.Results {
+											t2.Results[i].(*ast.Ident).Name = fmt.Sprintf("%v", fmt.Sprintf("%v", field.Type))
+										}
+									}
+								}*/
 							}
 						}
 					}
