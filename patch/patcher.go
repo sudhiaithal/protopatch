@@ -734,6 +734,7 @@ func (p *Patcher) checkGoFiles() error {
 	for id, name := range p.renames {
 		obj, _ := p.find(id)
 		if obj == nil {
+			log.Printf("Did not find the object for id %+v:%v %v", id.GoImportPath, id.GoName, name)
 			continue
 		}
 		p.objectRenames[obj] = name
@@ -741,12 +742,42 @@ func (p *Patcher) checkGoFiles() error {
 			//splits := strings.Split(obj.Type().String(), ".")
 			parentNames := strings.Split(id.GoName, ".")
 			if len(parentNames) == 2 {
+				//parentNames = parentNames[0:len(parentNames)-1]
 				p.fieldParentMap[obj] = parentNames[0]
 			} else {
 				p.fieldParentMap[obj] = p.parentMap[id]
 			}
 			log.Printf("Adding parent reference (%v) %v fo field  %v parents %v  TS %v Parent %v ", id, p.fieldParentMap[obj], obj, parentNames, obj.Type().String(), p.fieldParentMap[obj])
+		} else {
+			log.Printf("Did not find parent map for id %v:%v", id, obj)
+		}
+		if _, ok := p.embeds[id]; ok {
+			p.fieldEmbeds[obj] = name
+		}
+		if _, ok := p.nonNullables[id]; ok {
+			p.fieldNonNullables[obj] = name
+		}
+	}
 
+	for id, name := range p.nonNullables {
+		if _, ok := p.renames[id]; ok {
+			continue
+		}
+		obj, _ := p.find(id)
+		if obj == nil {
+			continue
+		}
+		p.objectRenames[obj] = name
+		if _, ok := p.parentMap[id]; ok {
+			splits := strings.Split(obj.Type().String(), ".")
+			parentNames := strings.Split(splits[len(splits)-1], "_")
+			if len(parentNames) > 2 {
+				parentNames = parentNames[0 : len(parentNames)-1]
+				p.fieldParentMap[obj] = strings.Join(parentNames, "_")
+			} else {
+				p.fieldParentMap[obj] = p.parentMap[id]
+			}
+			log.Printf("Adding Non nullable parent reference %v fo field  %v", p.parentMap[id], obj)
 		}
 		if _, ok := p.embeds[id]; ok {
 			p.fieldEmbeds[obj] = name
@@ -898,22 +929,84 @@ func (p *Patcher) serializeGoFiles(res *pluginpb.CodeGeneratorResponse) error {
 	return nil
 }
 
-func (p *Patcher) getFuncDecls(name string) []*ast.FuncDecl {
+type funcDecls struct {
+	decls     []*ast.FuncDecl
+	filename  string
+	className string
+}
 
-	var decls []*ast.FuncDecl
-	for _, f := range p.filesByName {
+func (p *Patcher) getFuncDecls(name string) []funcDecls {
+
+	funcDeclsSlice := []funcDecls{}
+	for fileName, f := range p.filesByName {
+		var decls []*ast.FuncDecl
 		for _, decl := range f.Decls {
 			switch decl.(type) {
 			case *ast.FuncDecl:
 				if decl.(*ast.FuncDecl).Name.Name == name {
 					decls = append(decls, decl.(*ast.FuncDecl))
-
 				}
 			}
+			funcDeclsSlice = append(funcDeclsSlice, funcDecls{decls: decls, filename: fileName})
 		}
 	}
-	return decls
+	return funcDeclsSlice
 
+}
+
+func (p *Patcher) addFuncDecls(fileName string, decl *ast.FuncDecl) {
+
+	f := p.filesByName[fileName]
+	f.Decls = append(f.Decls, decl)
+}
+
+func getPointerFunction(className string) *ast.FuncDecl {
+
+	funcDecl := &ast.FuncDecl{
+		Name: ast.NewIdent("Pointer"),
+		Recv: &ast.FieldList{
+			List: []*ast.Field{
+				{
+					Names: []*ast.Ident{ast.NewIdent("x")},
+					Type: &ast.StarExpr{
+						X: ast.NewIdent(className),
+					},
+				},
+			},
+		},
+		Type: &ast.FuncType{
+			Params: &ast.FieldList{
+				List: []*ast.Field{
+					{
+						Type: ast.NewIdent("data interface{}"),
+					},
+				},
+			},
+			Results: &ast.FieldList{
+				List: []*ast.Field{
+					{
+						Type: ast.NewIdent("interface{}"),
+					},
+				},
+			},
+		},
+		Body: &ast.BlockStmt{
+			List: []ast.Stmt{
+				&ast.AssignStmt{
+					Lhs: []ast.Expr{ast.NewIdent("a")},
+					Tok: token.DEFINE,
+					Rhs: []ast.Expr{ast.NewIdent(fmt.Sprintf("data.(%s)", className))},
+				},
+				&ast.ReturnStmt{
+					Results: []ast.Expr{
+						ast.NewIdent("&a"),
+					},
+				},
+			},
+		},
+	}
+
+	return funcDecl
 }
 
 func (p *Patcher) patchGoFiles() error {
@@ -1008,57 +1101,65 @@ func (p *Patcher) patchIdent(id *ast.Ident, obj types.Object, isDecl bool) {
 		}
 		fieldName := strings.TrimPrefix(id.Name, "Get")
 		for idx := range p.fieldNonNullables {
+			_, ok := obj.(*types.Func)
+			if !ok {
+				continue
+			}
 			if idx.Name() == fieldName && idx.Pkg().Name() == obj.(*types.Func).Pkg().Name() {
-				for _, funcDecl := range funcDecls {
-					className := ""
-					for _, param := range funcDecl.Recv.List {
-						className = fmt.Sprintf("%s", param.Type.(*ast.StarExpr).X)
-					}
-					if p.fieldParentMap[idx] != className {
-						log.Printf("Skipping Function as class name %v does not match of function %v does not match to rename field's class name %v", className, obj.(*types.Func).Name(), p.fieldParentMap[idx])
-						continue
-					}
-					for _, field := range funcDecl.Type.Results.List {
-						switch t1 := field.Type.(type) {
-						case *ast.StarExpr:
-
-							log.Printf("Changed return for method %v from *%s : → %s (non-nullable)",
-								idx.Name, t1.X, t1.X)
-							switch t3 := t1.X.(type) {
-							case *ast.Ident:
-								field.Type = &ast.Ident{
-									Name: t3.Name}
-							case *ast.SelectorExpr:
-								field.Type = &ast.Ident{
-									Name: fmt.Sprintf("%v", t3.X) + "." + t3.Sel.Name}
-							}
-							for _, stmt := range funcDecl.Body.List {
-								switch t2 := stmt.(type) {
-								case *ast.ReturnStmt:
-									for i := range t2.Results {
-										t2.Results[i].(*ast.Ident).Name = fmt.Sprintf("%v{}", fmt.Sprintf("%v", field.Type))
-									}
-								}
-							}
-						case *ast.ArrayType:
-							switch t3 := t1.Elt.(type) {
+				for i, funcDeclData := range funcDecls {
+					for _, funcDecl := range funcDeclData.decls {
+						className := ""
+						for _, param := range funcDecl.Recv.List {
+							className = fmt.Sprintf("%s", param.Type.(*ast.StarExpr).X)
+						}
+						if p.fieldParentMap[idx] != className {
+							log.Printf("Skipping Function as class name %v does not match of function %v does not match to rename field's class name %v", className, obj.(*types.Func).Name(), p.fieldParentMap[idx])
+							continue
+						}
+						for _, field := range funcDecl.Type.Results.List {
+							switch t1 := field.Type.(type) {
 							case *ast.StarExpr:
-								switch t4 := t3.X.(type) {
+
+								log.Printf("Changed return for method %v from *%s : → %s (non-nullable)",
+									idx.Name, t1.X, t1.X)
+								switch t3 := t1.X.(type) {
 								case *ast.Ident:
-									field.Type = &ast.ArrayType{
-										Elt: &ast.Ident{Name: t4.Name}}
+									field.Type = &ast.Ident{
+										Name: t3.Name}
 								case *ast.SelectorExpr:
-									field.Type = &ast.ArrayType{
-										Elt: &ast.Ident{Name: fmt.Sprintf("%v", t4.X) + "." + t4.Sel.Name}}
+									field.Type = &ast.Ident{
+										Name: fmt.Sprintf("%v", t3.X) + "." + t3.Sel.Name}
 								}
-								/*for _, stmt := range funcDecl.Body.List {
+								for _, stmt := range funcDecl.Body.List {
 									switch t2 := stmt.(type) {
 									case *ast.ReturnStmt:
 										for i := range t2.Results {
-											t2.Results[i].(*ast.Ident).Name = fmt.Sprintf("%v", fmt.Sprintf("%v", field.Type))
+											t2.Results[i].(*ast.Ident).Name = fmt.Sprintf("%v{}", fmt.Sprintf("%v", field.Type))
 										}
 									}
-								}*/
+								}
+							case *ast.ArrayType:
+								switch t3 := t1.Elt.(type) {
+								case *ast.StarExpr:
+									switch t4 := t3.X.(type) {
+									case *ast.Ident:
+										log.Printf("Changed return for method %v from *%s : → %s (non-nullable)",
+											idx.Name, t3.X, t3.X)
+										field.Type = &ast.ArrayType{
+											Elt: &ast.Ident{Name: t4.Name}}
+										className := funcDecl.Recv.List[0].Type.(*ast.StarExpr).X.(*ast.Ident).Name
+										p.addFuncDecls(funcDecls[i].filename, getPointerFunction(className))
+										log.Printf("Adding pointer function for class %v", className)
+									case *ast.SelectorExpr:
+										log.Printf("2 Changed return for method %v from *%s : → %s (non-nullable)",
+											idx.Name, t3.X, t3.X)
+										field.Type = &ast.ArrayType{
+											Elt: &ast.Ident{Name: fmt.Sprintf("%v", t4.X) + "." + t4.Sel.Name}}
+										className := funcDecl.Recv.List[0].Type.(*ast.StarExpr).X.(*ast.Ident).Name
+										log.Printf("Adding pointer function for class %v", className)
+										p.addFuncDecls(funcDecls[i].filename, getPointerFunction(className))
+									}
+								}
 							}
 						}
 					}
