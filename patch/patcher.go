@@ -748,6 +748,9 @@ func (p *Patcher) checkGoFiles() error {
 				p.fieldParentMap[obj] = p.parentMap[id]
 			}
 			log.Printf("Adding parent reference (%v) %v fo field  %v parents %v  TS %v Parent %v ", id, p.fieldParentMap[obj], obj, parentNames, obj.Type().String(), p.fieldParentMap[obj])
+
+			//p.fieldParentMap[obj] = p.parentMap[id]
+			//log.Printf("Adding parent reference %v fo field  %v", p.parentMap[id], obj)
 		} else {
 			log.Printf("Did not find parent map for id %v:%v", id, obj)
 		}
@@ -954,10 +957,19 @@ func (p *Patcher) getFuncDecls(name string) []funcDecls {
 
 }
 
-func (p *Patcher) addFuncDecls(fileName string, decl *ast.FuncDecl) {
+func (p *Patcher) addFuncDecls(fileName string, addDecl *ast.FuncDecl) {
 
 	f := p.filesByName[fileName]
-	f.Decls = append(f.Decls, decl)
+	for _, decl := range f.Decls {
+		switch decl.(type) {
+		case *ast.FuncDecl:
+			if decl.(*ast.FuncDecl).Name.Name == addDecl.Name.Name &&
+				decl.(*ast.FuncDecl).Recv.List[0].Type.(*ast.StarExpr).X.(*ast.Ident).Name == addDecl.Recv.List[0].Type.(*ast.StarExpr).X.(*ast.Ident).Name {
+				return
+			}
+		}
+	}
+	f.Decls = append(f.Decls, addDecl)
 }
 
 func getPointerFunction(className string) *ast.FuncDecl {
@@ -1028,10 +1040,27 @@ func (p *Patcher) patchGoFiles() error {
 	}
 
 	log.Printf("\nUnresolved\n")
-	for _, f := range p.filesByName {
+	for fileName, f := range p.filesByName {
 		for _, id := range f.Unresolved {
 			p.patchIdent(id, nil, false)
 		}
+
+		ast.Inspect(f, func(n ast.Node) bool {
+			// try to convert n to ast.TypeSpec
+			if typeSpec, isTypeSpec := n.(*ast.TypeSpec); isTypeSpec {
+				_, isStructType := typeSpec.Type.(*ast.StructType)
+				// check if conversion was successful
+				if !isStructType {
+					return true
+				}
+				log.Printf("Struct found %v\n", typeSpec.Name.Name)
+				if typeSpec.Name.Name != "x" {
+					p.addFuncDecls(fileName, getPointerFunction(typeSpec.Name.Name))
+				}
+
+			}
+			return true
+		})
 	}
 
 	return nil
@@ -1106,7 +1135,7 @@ func (p *Patcher) patchIdent(id *ast.Ident, obj types.Object, isDecl bool) {
 				continue
 			}
 			if idx.Name() == fieldName && idx.Pkg().Name() == obj.(*types.Func).Pkg().Name() {
-				for i, funcDeclData := range funcDecls {
+				for _, funcDeclData := range funcDecls {
 					for _, funcDecl := range funcDeclData.decls {
 						className := ""
 						for _, param := range funcDecl.Recv.List {
@@ -1120,7 +1149,7 @@ func (p *Patcher) patchIdent(id *ast.Ident, obj types.Object, isDecl bool) {
 							switch t1 := field.Type.(type) {
 							case *ast.StarExpr:
 
-								log.Printf("Changed return for method %v from *%s : → %s (non-nullable)",
+								log.Printf("1 Changed return for method %v from *%s : → %s (non-nullable)",
 									idx.Name, t1.X, t1.X)
 								switch t3 := t1.X.(type) {
 								case *ast.Ident:
@@ -1143,21 +1172,11 @@ func (p *Patcher) patchIdent(id *ast.Ident, obj types.Object, isDecl bool) {
 								case *ast.StarExpr:
 									switch t4 := t3.X.(type) {
 									case *ast.Ident:
-										log.Printf("Changed return for method %v from *%s : → %s (non-nullable)",
-											idx.Name, t3.X, t3.X)
 										field.Type = &ast.ArrayType{
 											Elt: &ast.Ident{Name: t4.Name}}
-										className := funcDecl.Recv.List[0].Type.(*ast.StarExpr).X.(*ast.Ident).Name
-										p.addFuncDecls(funcDecls[i].filename, getPointerFunction(className))
-										log.Printf("Adding pointer function for class %v", className)
 									case *ast.SelectorExpr:
-										log.Printf("2 Changed return for method %v from *%s : → %s (non-nullable)",
-											idx.Name, t3.X, t3.X)
 										field.Type = &ast.ArrayType{
 											Elt: &ast.Ident{Name: fmt.Sprintf("%v", t4.X) + "." + t4.Sel.Name}}
-										className := funcDecl.Recv.List[0].Type.(*ast.StarExpr).X.(*ast.Ident).Name
-										log.Printf("Adding pointer function for class %v", className)
-										p.addFuncDecls(funcDecls[i].filename, getPointerFunction(className))
 									}
 								}
 							}
